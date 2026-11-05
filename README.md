@@ -14,10 +14,13 @@ Aplicação em Python com interface interativa Streamlit para automatizar consul
   - Controle de retentativas para falhas temporárias de rede.
   - Intervalo controlado entre requisições configurável na tela (padrão de 2,0s para proteção contra bloqueios/rate-limit).
 - **Acompanhamento em Tempo Real:** Barra de progresso com porcentagem, contagem de registros processados e painel de métricas (Total, Concluídas e Erros).
-- **Tratamento Individual de Erros:** Qualquer falha isolada (veículo inexistente, RENAVAM incorreto, placa inválida) é registrada com seu motivo amigável sem interromper os demais veículos.
-- **Exportação do Resultado Final:** Gera planilha Excel com duas abas:
-  - **`Resultados`:** Apenas registros bem-sucedidos com as informações retornadas diretamente pela API (`Placa`, `RENAVAM`, `UF`, `Chassi`).
-  - **`Erros`:** Registros que apresentaram divergência ou erro com `Placa`, `RENAVAM` e `Motivo do erro`.
+- **Reprocessamento Automático de Erros:** Se qualquer consulta falhar durante a fila (por exemplo, na placa 3 de 20), o sistema conclui todas as 20 consultas e, logo em seguida, realiza automaticamente uma nova tentativa para as placas que apresentaram erro.
+- **Planilha Unificada e Ordem Estrita:**
+  - Gera o arquivo Excel final com **aba única** (`Resultados`), eliminando a divisão em abas separadas.
+  - Mantém **rigorosamente a mesma ordem da planilha enviada**, garantindo controle total dos dados de entrada e saída (linha a linha).
+  - Colunas geradas: `Placa`, `RENAVAM`, `UF`, `Chassi` e `Situação`.
+  - Registros com sucesso exibem `Sucesso` na coluna `Situação`.
+  - Registros com inconsistência mantêm a `Placa` e o `RENAVAM` originais, destacando o motivo exato do erro na coluna `Situação`.
 
 ---
 

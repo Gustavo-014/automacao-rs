@@ -94,22 +94,32 @@ def processar_lote_veiculos(
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Processa a lista de veículos consultando a API do DetranRS.
 
+    Fluxo de execução:
+    1. Primeira passada: consulta cada veículo na ordem original de entrada.
+    2. Identificação de erros: os veículos que falharam na primeira tentativa são marcados.
+    3. Reprocessamento de erros: após concluir a consulta do último veículo do lote,
+       o sistema realiza uma nova tentativa para cada item que havia falhado.
+    4. Unificação e integridade de ordem: os resultados finais são mantidos rigorosamente
+       na mesma ordem da planilha de entrada, com uma coluna 'Situação' indicando o status
+       (ex.: 'Sucesso' ou o motivo do erro).
+
     Parâmetros:
         df_entrada: DataFrame contendo colunas 'Placa' e 'Renavam'.
         progresso_callback: Função chamada a cada item processado (atual, total, status_dict).
-        delay_entre_requisicoes: Pausa em segundos entre requisições para evitar rate-limiting (padrão 2.0s).
+        delay_entre_requisicoes: Pausa em segundos entre requisições para evitar rate-limiting.
         session: Sessão requests opcional.
 
     Retorna:
-        (df_resultados, df_erros)
+        (df_resultados_unificado, df_erros)
     """
     total = len(df_entrada)
-    lista_sucessos: List[Dict[str, Any]] = []
-    lista_erros: List[Dict[str, Any]] = []
+    registros: List[Dict[str, Any]] = [{} for _ in range(total)]
+    indices_erros: List[int] = []
 
     sessao = session or criar_sessao_detran()
 
-    for idx, row in enumerate(df_entrada.itertuples(index=False), start=1):
+    # ── 1ª Passada: Consulta sequencial de todos os itens ──────────────────────
+    for idx, row in enumerate(df_entrada.itertuples(index=False)):
         placa_orig = str(getattr(row, "Placa", "") or "").strip()
         renavam_orig = str(getattr(row, "Renavam", "") or "").strip()
 
@@ -120,47 +130,114 @@ def processar_lote_veiculos(
         )
 
         if sucesso and dados_veiculo:
-            lista_sucessos.append(dados_veiculo)
-            status_item = {
+            registros[idx] = {
+                "Placa": dados_veiculo.get("Placa", placa_orig),
+                "RENAVAM": dados_veiculo.get("RENAVAM", renavam_orig),
+                "UF": dados_veiculo.get("UF", ""),
+                "Chassi": dados_veiculo.get("Chassi", ""),
+                "Situação": "Sucesso",
                 "sucesso": True,
-                "placa": dados_veiculo.get("Placa", placa_orig),
-                "renavam": dados_veiculo.get("RENAVAM", renavam_orig),
+            }
+            status_item = {
+                "fase": "principal",
+                "sucesso": True,
+                "placa": registros[idx]["Placa"],
+                "renavam": registros[idx]["RENAVAM"],
+                "indice": idx,
             }
         else:
-            lista_erros.append({
+            erro_desc = motivo_erro or "Erro na consulta do veículo."
+            registros[idx] = {
                 "Placa": placa_orig,
                 "RENAVAM": renavam_orig,
-                "Motivo do erro": motivo_erro or "Erro não especificado.",
-            })
+                "UF": "",
+                "Chassi": "",
+                "Situação": erro_desc,
+                "sucesso": False,
+            }
+            indices_erros.append(idx)
             status_item = {
+                "fase": "principal",
                 "sucesso": False,
                 "placa": placa_orig,
                 "renavam": renavam_orig,
-                "erro": motivo_erro,
+                "indice": idx,
+                "erro": erro_desc,
             }
 
         if progresso_callback:
-            progresso_callback(idx, total, status_item)
+            progresso_callback(idx + 1, total, status_item)
 
-        # Intervalo respeitoso entre requisições para proteção contra rate-limiting
-        if idx < total and delay_entre_requisicoes > 0:
+        # Intervalo entre requisições da 1ª passada
+        if (idx + 1) < total and delay_entre_requisicoes > 0:
             time.sleep(delay_entre_requisicoes)
 
-    # Constrói DataFrames finais estruturados
-    cols_sucesso = ["Placa", "RENAVAM", "UF", "Chassi"]
-    if lista_sucessos:
-        df_sucessos_raw = pd.DataFrame(lista_sucessos)
-        for c in cols_sucesso:
-            if c not in df_sucessos_raw.columns:
-                df_sucessos_raw[c] = ""
-        df_resultados = df_sucessos_raw[cols_sucesso]
-    else:
-        df_resultados = pd.DataFrame(columns=cols_sucesso)
+    # ── 2ª Passada: Reprocessamento dos itens que apresentaram erro ────────────
+    if indices_erros:
+        total_erros_inicial = len(indices_erros)
+        if delay_entre_requisicoes > 0:
+            time.sleep(delay_entre_requisicoes)
 
-    cols_erro = ["Placa", "RENAVAM", "Motivo do erro"]
-    if lista_erros:
-        df_erros = pd.DataFrame(lista_erros)[cols_erro]
-    else:
-        df_erros = pd.DataFrame(columns=cols_erro)
+        if progresso_callback:
+            progresso_callback(
+                0,
+                total_erros_inicial,
+                {
+                    "fase": "reprocessamento_inicio",
+                    "qtd_reprocessar": total_erros_inicial,
+                },
+            )
 
-    return df_resultados, df_erros
+        for rep_num, idx_erro in enumerate(indices_erros, start=1):
+            placa_rep = registros[idx_erro]["Placa"]
+            renavam_rep = registros[idx_erro]["RENAVAM"]
+
+            sucesso_rep, dados_veiculo_rep, motivo_erro_rep = consultar_veiculo(
+                placa=placa_rep,
+                renavam=renavam_rep,
+                session=sessao,
+            )
+
+            if sucesso_rep and dados_veiculo_rep:
+                registros[idx_erro] = {
+                    "Placa": dados_veiculo_rep.get("Placa", placa_rep),
+                    "RENAVAM": dados_veiculo_rep.get("RENAVAM", renavam_rep),
+                    "UF": dados_veiculo_rep.get("UF", ""),
+                    "Chassi": dados_veiculo_rep.get("Chassi", ""),
+                    "Situação": "Sucesso",
+                    "sucesso": True,
+                }
+                status_rep = {
+                    "fase": "reprocessamento_item",
+                    "sucesso": True,
+                    "placa": placa_rep,
+                    "renavam": renavam_rep,
+                    "indice": idx_erro,
+                }
+            else:
+                erro_atualizado = motivo_erro_rep or registros[idx_erro]["Situação"]
+                registros[idx_erro]["Situação"] = erro_atualizado
+                registros[idx_erro]["sucesso"] = False
+                status_rep = {
+                    "fase": "reprocessamento_item",
+                    "sucesso": False,
+                    "placa": placa_rep,
+                    "renavam": renavam_rep,
+                    "indice": idx_erro,
+                    "erro": erro_atualizado,
+                }
+
+            if progresso_callback:
+                progresso_callback(rep_num, total_erros_inicial, status_rep)
+
+            if rep_num < total_erros_inicial and delay_entre_requisicoes > 0:
+                time.sleep(delay_entre_requisicoes)
+
+    # ── Construção do DataFrame mantendo a ordem estrita da entrada ────────────
+    colunas_finais = ["Placa", "RENAVAM", "UF", "Chassi", "Situação"]
+    df_resultados_unificado = pd.DataFrame(registros)[colunas_finais]
+
+    # Dataframe auxiliar contendo apenas os registros que permaneceram com erro
+    df_erros = df_resultados_unificado[df_resultados_unificado["Situação"] != "Sucesso"].copy()
+
+    return df_resultados_unificado, df_erros

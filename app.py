@@ -448,23 +448,49 @@ def main():
 
                     def atualizar_progresso(atual: int, total: int, status_item: dict):
                         nonlocal contador_sucessos, contador_erros
-                        if status_item.get("sucesso"):
-                            contador_sucessos += 1
-                        else:
-                            contador_erros += 1
+                        fase = status_item.get("fase", "principal")
 
-                        pct = atual / total
-                        progress_bar.progress(pct)
-                        status_placeholder.info(
-                            f"Consultando veículo {atual} de {total} ({int(pct * 100)}%) — "
-                            f"Última placa: `{status_item.get('placa', '')}` "
-                            f"(intervalo de {delay_segundos:.1f}s)",
-                            icon=":material/sync:",
-                        )
+                        if fase == "principal":
+                            if status_item.get("sucesso"):
+                                contador_sucessos += 1
+                            else:
+                                contador_erros += 1
+
+                            pct = (atual / total) * 0.90 if total > 0 else 0
+                            progress_bar.progress(min(pct, 0.90))
+                            status_placeholder.info(
+                                f"Consultando veículo {atual} de {total} ({int((atual / total) * 100)}%) — "
+                                f"Última placa: `{status_item.get('placa', '')}` "
+                                f"(intervalo de {delay_segundos:.1f}s)",
+                                icon=":material/sync:",
+                            )
+
+                        elif fase == "reprocessamento_inicio":
+                            qtd = status_item.get("qtd_reprocessar", 0)
+                            status_placeholder.warning(
+                                f"Primeira passada finalizada. Iniciando reprocessamento de {qtd} consulta(s) que apresentaram erro...",
+                                icon=":material/autorenew:",
+                            )
+
+                        elif fase == "reprocessamento_item":
+                            if status_item.get("sucesso"):
+                                contador_sucessos += 1
+                                contador_erros = max(0, contador_erros - 1)
+                                status_placeholder.success(
+                                    f"Reprocessando erros ({atual}/{total}): Placa `{status_item.get('placa', '')}` consultada com sucesso!",
+                                    icon=":material/check_circle:",
+                                )
+                            else:
+                                status_placeholder.warning(
+                                    f"Reprocessando erros ({atual}/{total}): Placa `{status_item.get('placa', '')}` ainda com erro.",
+                                    icon=":material/warning:",
+                                )
+                            pct = 0.90 + ((atual / total) * 0.10) if total > 0 else 1.0
+                            progress_bar.progress(min(pct, 1.0))
 
                         with metric_placeholder.container():
                             m1, m2, m3 = st.columns(3)
-                            m1.metric("Total no Lote", total, border=True)
+                            m1.metric("Total no Lote", total_regs, border=True)
                             m2.metric("Consultas Concluídas", contador_sucessos, border=True)
                             m3.metric("Erros Registrados", contador_erros, border=True)
 
@@ -503,9 +529,12 @@ def main():
             df_resultados = st.session_state.df_resultados
             df_erros = st.session_state.df_erros
 
-            total_concluido = len(df_resultados) if df_resultados is not None else 0
-            total_erros = len(df_erros) if df_erros is not None else 0
-            total_geral = total_concluido + total_erros
+            total_geral = len(df_resultados) if df_resultados is not None else 0
+            if df_resultados is not None and "Situação" in df_resultados.columns:
+                total_concluido = int((df_resultados["Situação"] == "Sucesso").sum())
+            else:
+                total_concluido = total_geral
+            total_erros = total_geral - total_concluido
 
             # Resumo em métricas
             col_m1, col_m2, col_m3 = st.columns(3)
@@ -515,7 +544,7 @@ def main():
 
             st.write("")
 
-            # Botão para baixar a planilha final
+            # Botão para baixar a planilha final em aba única
             resultado_excel_bytes = gerar_planilha_resultado(df_resultados, df_erros)
             nome_arquivo_resultado = f"resultado_detranrs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
@@ -526,30 +555,25 @@ def main():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary",
                 icon=":material/file_download:",
-                help="Baixar o arquivo Excel contendo as abas 'Resultados' e 'Erros'.",
+                help="Baixar o arquivo Excel contendo todos os registros na mesma ordem da planilha enviada.",
                 use_container_width=True,
             )
 
             st.write("")
 
-            # Abas sem emojis, com ícones Material
-            tab_resultados, tab_erros = st.tabs([
-                f":material/check_circle: Veículos Localizados ({total_concluido})",
-                f":material/warning: Erros e Inconsistências ({total_erros})",
-            ])
+            st.markdown(
+                """
+                <div class="card-desc">
+                    Tabela unificada na <strong>mesma ordem da planilha enviada</strong>. A coluna <strong>Situação</strong> indica se a consulta foi concluída com sucesso ou o motivo do erro.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-            with tab_resultados:
-                if df_resultados is not None and not df_resultados.empty:
-                    st.dataframe(df_resultados, use_container_width=True)
-                else:
-                    st.info("Nenhum veículo retornou dados com sucesso.", icon=":material/info:")
-
-            with tab_erros:
-                if df_erros is not None and not df_erros.empty:
-                    st.warning("Os seguintes registros apresentaram inconsistências ou erros de consulta:", icon=":material/warning:")
-                    st.dataframe(df_erros, use_container_width=True)
-                else:
-                    st.success("Nenhum erro registrado durante as consultas!", icon=":material/check_circle:")
+            if df_resultados is not None and not df_resultados.empty:
+                st.dataframe(df_resultados, use_container_width=True)
+            else:
+                st.info("Nenhum dado retornado para exibição.", icon=":material/info:")
 
     # Rodapé Discreto
     st.markdown(
