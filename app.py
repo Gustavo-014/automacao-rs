@@ -278,7 +278,7 @@ def main():
                 label="Consultar",
                 type="primary",
                 icon=":material/search:",
-                use_container_width=True,
+                width="stretch",
                 key="btn_consulta_individual",
             )
 
@@ -347,7 +347,7 @@ def main():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 icon=":material/download:",
                 help="Clique para baixar a planilha modelo em formato Excel (.xlsx).",
-                use_container_width=True,
+                width="stretch",
             )
 
     with col_topo2:
@@ -401,7 +401,7 @@ def main():
             # Card de Prévia e Configurações
             with st.container(border=True):
                 with st.expander("Visualizar dados importados da planilha", icon=":material/table_view:", expanded=False):
-                    st.dataframe(df_validado, use_container_width=True)
+                    st.dataframe(df_validado, width="stretch")
 
                 col_cfg, col_btn = st.columns([1, 1], gap="large")
                 with col_cfg:
@@ -421,7 +421,7 @@ def main():
                         type="primary",
                         icon=":material/play_arrow:",
                         disabled=st.session_state.processamento_concluido,
-                        use_container_width=True,
+                        width="stretch",
                     )
 
             if iniciar:
@@ -556,7 +556,7 @@ def main():
                 type="primary",
                 icon=":material/file_download:",
                 help="Baixar o arquivo Excel contendo todos os registros na mesma ordem da planilha enviada.",
-                use_container_width=True,
+                width="stretch",
             )
 
             st.write("")
@@ -571,7 +571,7 @@ def main():
             )
 
             if df_resultados is not None and not df_resultados.empty:
-                st.dataframe(df_resultados, use_container_width=True)
+                st.dataframe(df_resultados, width="stretch")
             else:
                 st.info("Nenhum dado retornado para exibição.", icon=":material/info:")
 
